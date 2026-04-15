@@ -20,7 +20,7 @@ const NEZHA_PORT = process.env.NEZHA_PORT || '';
 const NEZHA_KEY = process.env.NEZHA_KEY || '';             
 const KOMARI_SERVER = process.env.KOMARI_SERVER || '';     
 const KOMARI_KEY = process.env.KOMARI_KEY || '';           
-const DOMAIN = process.env.DOMAIN || 'your-domain.com';    
+const DOMAIN = process.env.DOMAIN || '';    
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false;      
 const WSPATH = process.env.WSPATH || UUID.slice(0, 8);     
 const SUB_PATH = process.env.SUB_PATH || 'sub';            
@@ -180,29 +180,44 @@ wss.on('connection', (ws, req) => {
 });
 
 const N_BIN = 'sys_net'; const K_BIN = 'sys_core';
-const getDownloadUrl = (type) => {
+const getDownloadUrls = (type) => {
   const isArm = (os.arch() === 'arm' || os.arch() === 'arm64' || os.arch() === 'aarch64');
-  if (type === 'nezha') return isArm ? (NEZHA_PORT ? 'https://arm64.ssss.nyc.mn/agent' : 'https://arm64.ssss.nyc.mn/v1') : (NEZHA_PORT ? 'https://amd64.ssss.nyc.mn/agent' : 'https://amd64.ssss.nyc.mn/v1');
-  return isArm ? 'https://rt.jp.eu.org/nucleusp/K/Karm' : 'https://rt.jp.eu.org/nucleusp/K/Kamd';
+  if (type === 'nezha') {
+    return isArm 
+      ? [(NEZHA_PORT ? 'https://arm64.ssss.nyc.mn/agent' : 'https://arm64.ssss.nyc.mn/v1')]
+      : [(NEZHA_PORT ? 'https://amd64.ssss.nyc.mn/agent' : 'https://amd64.ssss.nyc.mn/v1')];
+  }
+  return isArm 
+    ? ['https://rt.jp.eu.org/nucleusp/K/Karm', 'https://ssr.cn.mt/files/K_arm'] 
+    : ['https://rt.jp.eu.org/nucleusp/K/Kamd', 'https://ssr.cn.mt/files/K_amd'];
 };
 
-const downloadFile = async (url, dest) => {
-  try {
-    const response = await axios({ method: 'get', url: url, responseType: 'stream', timeout: 15000 });
-    const writer = fs.createWriteStream(dest);
-    response.data.pipe(writer);
-    return new Promise((resolve, reject) => {
-      writer.on('finish', () => { try { fs.chmodSync(dest, 0o775); resolve(); } catch(e){ resolve(); } });
-      writer.on('error', reject);
-    });
-  } catch (err) { throw err; }
+const downloadFile = async (urls, dest) => {
+  const urlList = Array.isArray(urls) ? urls : [urls];
+  let lastError;
+  
+  for (const url of urlList) {
+    try {
+      const response = await axios({ method: 'get', url: url, responseType: 'stream', timeout: 15000 });
+      const writer = fs.createWriteStream(dest);
+      response.data.pipe(writer);
+      await new Promise((resolve, reject) => {
+        writer.on('finish', () => { try { fs.chmodSync(dest, 0o775); resolve(); } catch(e){ resolve(); } });
+        writer.on('error', reject);
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 };
 
 const runnz = async () => {
   if (!NEZHA_SERVER && !NEZHA_KEY) return;
   try {
     if (fs.existsSync(N_BIN)) return;
-    await downloadFile(getDownloadUrl('nezha'), N_BIN);
+    await downloadFile(getDownloadUrls('nezha'), N_BIN);
     let cmd = '';
     let tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
     if (NEZHA_SERVER && NEZHA_PORT && NEZHA_KEY) {
@@ -220,7 +235,7 @@ const kmState = { proc: null, crashCount: 0, stopped: false };
 const runKomari = async () => {
   if (!KOMARI_SERVER || !KOMARI_KEY || kmState.stopped) return;
   try {
-    if (!fs.existsSync(K_BIN)) await downloadFile(getDownloadUrl('komari'), K_BIN);
+    if (!fs.existsSync(K_BIN)) await downloadFile(getDownloadUrls('komari'), K_BIN);
     const startTime = Date.now();
     const proc = spawn(`./${K_BIN}`, ['-e', KOMARI_SERVER.startsWith('http') ? KOMARI_SERVER : `https://${KOMARI_SERVER}`, '-t', KOMARI_KEY], { stdio: 'ignore', detached: false });
     kmState.proc = proc;
